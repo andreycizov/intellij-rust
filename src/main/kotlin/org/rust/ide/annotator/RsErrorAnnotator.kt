@@ -134,6 +134,12 @@ class RsErrorAnnotator : Annotator, HighlightRangeExtension {
 
     private fun checkPath(holder: AnnotationHolder, path: RsPath) {
         val child = path.path
+        if (path.reference.resolve() != null) {
+            val annotation = holder.createErrorAnnotation(path, "Missing path: invalid import")
+
+            annotation.registerFix(ImportFix(path))
+        }
+
         if ((child == null || isValidSelfSuperPrefix(child)) && !isValidSelfSuperPrefix(path)) {
             holder.createErrorAnnotation(path, "Invalid path: self and super are allowed only at the beginning")
             return

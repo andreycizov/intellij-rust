@@ -15,6 +15,7 @@ import com.intellij.openapi.util.Key
 import com.intellij.openapi.util.TextRange
 import com.intellij.psi.PsiElement
 import com.intellij.psi.PsiFile
+import com.intellij.psi.stubs.StubIndex
 import com.intellij.psi.util.PsiTreeUtil
 import org.rust.cargo.project.workspace.PackageOrigin
 import org.rust.cargo.project.workspace.cargoWorkspace
@@ -23,7 +24,9 @@ import org.rust.lang.core.psi.*
 import org.rust.lang.core.psi.ext.*
 import org.rust.lang.core.resolve.Namespace
 import org.rust.lang.core.resolve.namespaces
+import org.rust.lang.core.stubs.index.RsNamedElementIndex
 import org.rust.lang.core.types.ty.TyPointer
+import org.rust.lang.core.types.ty.TyPrimitive
 import org.rust.lang.core.types.ty.TyUnit
 import org.rust.lang.core.types.type
 
@@ -134,10 +137,17 @@ class RsErrorAnnotator : Annotator, HighlightRangeExtension {
 
     private fun checkPath(holder: AnnotationHolder, path: RsPath) {
         val child = path.path
-        if (path.reference.resolve() != null) {
-            val annotation = holder.createErrorAnnotation(path, "Missing path: invalid import")
+        if (path.reference.resolve() == null && TyPrimitive.fromPath(path) == null) {
+            val x = TyPrimitive.fromPath(path).toString()
+            val annotation = holder.createErrorAnnotation(
+                path.navigationElement,
+                "Missing path: invalid import $x"
+            )
 
-            annotation.registerFix(ImportFix(path))
+            for (e in path.findMatchingNamedElements()) {
+                annotation.registerFix(ImportFix(e, path))
+            }
+            return
         }
 
         if ((child == null || isValidSelfSuperPrefix(child)) && !isValidSelfSuperPrefix(path)) {
@@ -558,6 +568,20 @@ private fun AnnotationSession.duplicatesByNamespace(owner: PsiElement, recursive
     fileMap[owner] = duplicates
     return duplicates
 }
+
+private fun RsPath.findMatchingNamedElements(): Collection<RsNamedElement> {
+    // How do we find the parents?
+    //
+
+    var top_path = this
+    while (top_path.path != null) {
+        top_path = top_path.path!!
+    }
+
+    return StubIndex.getElements(RsNamedElementIndex.KEY, top_path.identifier?.text!!, project, null,
+        RsNamedElement::class.java)
+}
+
 
 private fun PsiElement.namedChildren(recursively: Boolean): Sequence<RsNamedElement> =
     if (recursively) {

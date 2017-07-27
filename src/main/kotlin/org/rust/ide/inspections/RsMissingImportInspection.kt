@@ -11,7 +11,6 @@ import com.intellij.psi.stubs.StubIndex
 import org.rust.ide.inspections.fixes.ImportFix
 import org.rust.lang.core.psi.*
 import org.rust.lang.core.psi.ext.*
-import org.rust.lang.core.psi.impl.RsUseItemImpl
 import org.rust.lang.core.stubs.index.RsNamedElementIndex
 import org.rust.lang.core.types.ty.TyPrimitive
 import java.util.HashSet
@@ -34,7 +33,7 @@ class RsMissingImportInspection : RsLocalInspectionTool() {
 
                 // TODO: now check if the root path is not a primitive!!!
 
-                holder.registerProblem(o.navigationElement, "Missing import", *(o.findMatchingNamedElements().map { it.findPubPath() }.filter { it != null }.map { it!! }.map { ImportFix(it, o) }).toTypedArray())
+                holder.registerProblem(o.navigationElement, "Missing import", *(o.findMatchingNamedElements().map { it.findPubPath(o) }.filter { it != null }.map { it!! }.map { ImportFix(it, o) }).toTypedArray())
             }
         }
 }
@@ -64,9 +63,6 @@ private fun RsPath.findMatchingNamedElements(): Collection<RsNamedElement> {
 }
 
 private fun RsNamedElement.getPubUse(): RsMod? {
-    var mod: RsMod? = null
-    var refMod: RsMod? = null
-
     // So, cases
 
     // 1) we're operating on a struct
@@ -82,19 +78,27 @@ private fun RsNamedElement.getPubUse(): RsMod? {
 
     // Crate root may also contain items!
 
+    // We do not differentiate between "NO PARENT" and "NOT PUBLIC"
+
     if (this is RsMod) {
-        if (this.isCrateRoot || (this.`super` != null && this.`super`!!.modName!! == "main")) {
+        if (this.isCrateRoot) {
             // Crate roots are always public
             return this
         } else {
             // Needs to have a parent
-            mod = this.`super`
-            refMod = this
+
+            return this.findParentReferencesTo(this)
+        }
+    } else if (this is RsExternCrateItem) {
+        val ref = this.reference.resolve()
+        if (ref is RsMod) {
+            return ref.getPubUse()
         }
     } else if (this is RsVisibilityOwner) {
         if (this.isPublic) {
+
             // This may be defined in the crate root.
-            mod = this.parentOfType<RsMod>()!!
+            val mod = this.parentOfType<RsMod>()!!
 
             val pubUse = mod.getPubUse()
 
@@ -106,16 +110,15 @@ private fun RsNamedElement.getPubUse(): RsMod? {
             // 2) Our parent is not publicly available
             // -> Our parent needs to have a parent
 
-            refMod = mod
-            mod = mod.`super`
-        } else {
-            return null
+            return mod.findParentReferencesTo(this)
         }
-    } else {
-        return null
     }
 
-    refMod = refMod!!
+    return null
+}
+
+private fun RsMod.findParentReferencesTo(o: RsNamedElement): RsMod? {
+    var mod = this.`super`
 
     while (mod != null) {
         for (modChild in mod.children) {
@@ -123,19 +126,19 @@ private fun RsNamedElement.getPubUse(): RsMod? {
                 val path = modChild.path
                 val useItems = modChild.useGlobList
 
-                if (path != null && path.isReferenceTo(refMod) && useItems != null) {
-                    if (useItems.useGlobList.map { it.isReferenceTo(this) }.fold(false) { a, b -> a || b }) {
+                if (path != null && path.isReferenceTo(this) && useItems != null) {
+                    if (useItems.useGlobList.map { it.isReferenceTo(o) }.fold(false) { a, b -> a || b }) {
                         return mod
                     }
-                } else if (path != null && path.isReferenceTo(refMod) && modChild.isStarImport) {
+                } else if (path != null && path.isReferenceTo(this) && modChild.isStarImport) {
                     return mod
-                } else if (path != null && path.isReferenceTo(this)) {
+                } else if (path != null && path.isReferenceTo(o)) {
                     return mod
                 }
 
-            } else if (modChild is RsModItem && modChild.isPublic && modChild == refMod) {
+            } else if (modChild is RsModItem && modChild.isPublic && modChild == this) {
                 return mod
-            } else if (modChild is RsModDeclItem && modChild.isPublic && modChild.isReferenceTo(refMod)) {
+            } else if (modChild is RsModDeclItem && modChild.isPublic && modChild.isReferenceTo(o)) {
                 return mod
             }
         }
@@ -162,54 +165,27 @@ val RsNamedElement.superUsePubMods: List<RsMod> get() {
 }
 
 
-private fun RsNamedElement.findPubPath(): List<String>? {
-    // 1) RsMod -> may be root (doesn't have a path)
-    // 2) RsXXX
-
-    // 1) This may not return the "lib" root
-    // 2) This may not return the full path therefore we can not yet remove the unavailable paths.
-
-
+private fun RsNamedElement.findPubPath(against: RsPath): List<String>? {
     val supMods = this.superUsePubMods.reversed().toList()
+    val containingCargoPackageName = this.containingCargoPackage?.name
 
-    val r = mutableListOf<String>()
+    if(this is RsExternCrateItem && containingCargoPackageName != null){
+        if(containingCargoPackageName == against.containingCargoPackage!!.name) {
+            return listOf(this.referenceName)
+        }
+    } else if(!supMods.isEmpty() && containingCargoPackageName != null) {
+        val first = supMods[0]
 
-    val pkg = if (this.containingCargoPackage != null) this.containingCargoPackage!!.name else "core"
+        // mod defined in `main` receives a global project-wide scope
+        if(first.isCrateRoot || (first.`super` != null && first.`super`!!.modName == "main")) {
+            val r = mutableListOf<String>()
+            r.add(containingCargoPackageName)
+            r.addAll(supMods.drop(1).map { it.modName!! })
+            r.add(this.name!!)
 
-    r.add("__${pkg}")
-    r.addAll(supMods.map { it.modName!! })
-    r.add("${this.name!!}__")
-    r.add("__${this}__")
-
-    return r
-
-    if (supMods.isEmpty()) {
-        return null
-    }
-
-    val cargoPackageName = this.containingCargoPackage?.name
-    val y = this.name!!
-
-
-
-    r.addAll(supMods.map { it.modName!! })
-
-    if (supMods[0].isCrateRoot) {
-        r.removeAt(0)
-
-        if (supMods[0].modName == "lib" && cargoPackageName != null) {
-            r.add(0, cargoPackageName)
-        } else if (cargoPackageName == null) {
-            r.add(0, "PKG_UNK")
+            return r
         }
     }
 
-    r.add(y)
-
-//    val pubUse = this.getPubUse()
-//
-//    val pubUseStr = if (pubUse != null) "__${pubUse.modName!!}__" else "__null__"
-//    r.add(pubUseStr)
-
-    return r
+    return null
 }

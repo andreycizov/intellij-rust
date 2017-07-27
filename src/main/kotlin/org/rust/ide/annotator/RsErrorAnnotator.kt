@@ -137,19 +137,6 @@ class RsErrorAnnotator : Annotator, HighlightRangeExtension {
 
     private fun checkPath(holder: AnnotationHolder, path: RsPath) {
         val child = path.path
-        if (path.reference.resolve() == null && TyPrimitive.fromPath(path) == null) {
-            val x = TyPrimitive.fromPath(path).toString()
-            val annotation = holder.createErrorAnnotation(
-                path.navigationElement,
-                "Missing path: invalid import $x"
-            )
-
-            for (e in path.findMatchingNamedElements()) {
-                annotation.registerFix(ImportFix(e, path))
-            }
-            return
-        }
-
         if ((child == null || isValidSelfSuperPrefix(child)) && !isValidSelfSuperPrefix(path)) {
             holder.createErrorAnnotation(path, "Invalid path: self and super are allowed only at the beginning")
             return
@@ -569,18 +556,6 @@ private fun AnnotationSession.duplicatesByNamespace(owner: PsiElement, recursive
     return duplicates
 }
 
-private fun RsPath.findMatchingNamedElements(): Collection<RsNamedElement> {
-    // How do we find the parents?
-    //
-
-    var top_path = this
-    while (top_path.path != null) {
-        top_path = top_path.path!!
-    }
-
-    return StubIndex.getElements(RsNamedElementIndex.KEY, top_path.identifier?.text!!, project, null,
-        RsNamedElement::class.java)
-}
 
 
 private fun PsiElement.namedChildren(recursively: Boolean): Sequence<RsNamedElement> =

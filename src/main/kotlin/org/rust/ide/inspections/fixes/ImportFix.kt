@@ -3,7 +3,7 @@
  * found in the LICENSE file.
  */
 
-package org.rust.ide.annotator.fixes
+package org.rust.ide.inspections.fixes
 
 import com.intellij.codeInspection.LocalQuickFixAndIntentionActionOnPsiElement
 import com.intellij.openapi.editor.Editor
@@ -13,42 +13,18 @@ import com.intellij.psi.PsiFile
 import org.rust.lang.core.psi.*
 import org.rust.lang.core.psi.ext.*
 
-class ImportFix(val suggestion: RsNamedElement, val expr: RsPath) : LocalQuickFixAndIntentionActionOnPsiElement(expr) {
+class ImportFix(val suggested: List<String>, val expr: RsPath) : LocalQuickFixAndIntentionActionOnPsiElement(expr) {
     override fun getFamilyName() = text
 
-    private fun getImportPath(): List<String> {
-        val supMods = suggestion.parentOfType<RsMod>()!!.superMods.reversed().toList()
-        val xx = suggestion.containingCargoPackage!!.name
-        val y = suggestion.name!!
-
-        val r = mutableListOf<String>()
-
-        r.addAll(supMods.map { it.modName!! })
-
-        if(supMods[0].isCrateRoot) {
-            r.removeAt(0)
-
-            if(supMods[0].modName == "lib") {
-                r.add(0, xx)
-            }
-        }
-
-        r.add(y)
-
-        return r
-    }
-
-
     override fun getText(): String {
-        val x = getImportPath().joinToString(separator = "::")
-        val y = suggestion.parentOfType<RsMod>()?.toString()
-        return "Import $x [$y]"
+        val x = suggested.joinToString(separator = "::")
+        return "Import $x"
     }
 
     override fun invoke(project: Project, file: PsiFile, editor: Editor?, startElement: PsiElement, endElement: PsiElement) {
-        val par =  expr.parentOfType<RsMod>()!!
+        val par = expr.parentOfType<RsMod>()!!
 
-        val my_path = getImportPath()
+        val my_path = suggested
 
 
         val ident2 = my_path.last()
@@ -57,11 +33,11 @@ class ImportFix(val suggestion: RsNamedElement, val expr: RsPath) : LocalQuickFi
         val itemPath = useOld?.path
         val itemPathIdentifier = useOld?.path?.identifier
 
-        if(useOld == null || itemPath == null || itemPathIdentifier == null) {
+        if (useOld == null || itemPath == null || itemPathIdentifier == null) {
             par.addBefore(RsPsiFactory(project).createUseItem(my_path.joinToString(separator = "::")), par.children.first())
         } else {
             val useGlobList = useOld.useGlobList
-            if(useGlobList != null) {
+            if (useGlobList != null) {
                 val oldPath = itemPath.getStringPath().joinToString("::")
                 val oldIdent = useGlobList.createString()
                 val useCreated = RsPsiFactory(project).createUseItem("$oldPath::{$ident2, $oldIdent}")
@@ -73,7 +49,7 @@ class ImportFix(val suggestion: RsNamedElement, val expr: RsPath) : LocalQuickFi
                 val itemAlias = useOld.alias?.identifier?.text
 
                 var alias = ""
-                if(itemAlias != null) {
+                if (itemAlias != null) {
                     alias = " as $itemAlias"
                 }
 
@@ -89,7 +65,7 @@ private fun RsUseGlob.createString(): String {
     val alias = this.alias?.identifier?.text
     val ident = this.identifier!!.text
 
-    if(alias != null) {
+    if (alias != null) {
         return "$ident as $alias"
     } else {
         return ident
@@ -114,7 +90,7 @@ private fun RsPath.getStringPath(): List<String> {
     return r.reversed().toList()
 }
 
-private fun RsMod.findMatchingUse(path: List<String>):RsUseItem?  {
+private fun RsMod.findMatchingUse(path: List<String>): RsUseItem? {
     var item: RsUseItem? = null
 
     for (e in this.descendantsOfType<RsUseItem>()) {
@@ -133,3 +109,4 @@ private fun RsMod.findMatchingUse(path: List<String>):RsUseItem?  {
 
     return item
 }
+

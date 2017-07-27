@@ -213,6 +213,11 @@
                          implementationClass="org.rust.ide.inspections.RsUnresolvedReferenceInspection"/>
 
         <localInspection language="Rust" groupName="Rust"
+                         displayName="Missing import"
+                         enabledByDefault="true" level="ERROR"
+                         implementationClass="org.rust.ide.inspections.RsMissingImportInspection"/>
+
+        <localInspection language="Rust" groupName="Rust"
                          displayName="Double negation"
                          enabledByDefault="true" level="WARNING"
                          implementationClass="org.rust.ide.inspections.RsDoubleNegInspection"/>
